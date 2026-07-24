@@ -345,6 +345,11 @@ async def handle_password_input(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     password = update.message.text
     
+    # Check if user is trying to change password
+    if context.user_data.get('changing_password'):
+        await handle_password_change(update, context)
+        return
+    
     # Verify password
     if verify_password(password):
         # Create session
@@ -394,10 +399,35 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     action = query.data
-    if action == "cancel_auth":
-        await cancel_auth(update, context)
+    
+    # Handle clear operations first (these are separate callbacks)
+    if action == "confirm_clear":
+        if user_id != OWNER_ID and not check_session(user_id):
+            await query.edit_message_text("⛔ Unauthorized.")
+            return
+        
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM visitors")
+        c.execute("UPDATE stats SET value = 0 WHERE key = 'total_visitors'")
+        conn.commit()
+        conn.close()
+        await query.edit_message_text("✅ All logs cleared successfully.")
         return
     
+    if action == "cancel_clear":
+        await query.edit_message_text("❌ Clear operation cancelled.")
+        return
+    
+    if action == "cancel_auth":
+        context.user_data['pending_command'] = None
+        await query.edit_message_text(
+            "❌ Authentication cancelled.\n\n"
+            "Use /start to try again."
+        )
+        return
+    
+    # Check permissions for admin actions
     if action == "change_password" and user_id != OWNER_ID:
         await query.edit_message_text("⛔ Only the owner can change the password.")
         return
@@ -406,7 +436,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⛔ Only the owner can reset sessions.")
         return
     
-    # Check authentication
+    # Check authentication for other actions
     if user_id != OWNER_ID and not check_session(user_id):
         context.user_data['pending_command'] = 'button_callback'
         context.user_data['pending_callback'] = action
@@ -452,7 +482,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "recent":
         visitors = get_recent_visitors(10)
         if not visitors:
-            await query.edit_message_text("No visitors yet.")
+            await query.edit_message_text(
+                "No visitors yet.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀ Back to Menu", callback_data="back_to_menu")]
+                ])
+            )
             return
 
         lines = ["📋 <b>RECENT VISITORS</b>\n"]
@@ -540,7 +575,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         await query.edit_message_text(
             "✅ All user sessions have been reset.\n\n"
-            "All users will need to re-authenticate with the password."
+            "All users will need to re-authenticate with the password.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀ Back to Menu", callback_data="back_to_menu")]
+            ])
         )
 
     elif action == "back_to_menu":
@@ -685,26 +723,6 @@ async def clear_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-async def confirm_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Confirm and clear logs."""
-    query = update.callback_query
-    await query.answer()
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID and not check_session(user_id):
-        await query.edit_message_text("⛔ Unauthorized.")
-        return
-
-    if query.data == "confirm_clear":
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("DELETE FROM visitors")
-        c.execute("UPDATE stats SET value = 0 WHERE key = 'total_visitors'")
-        conn.commit()
-        conn.close()
-        await query.edit_message_text("✅ All logs cleared successfully.")
-    else:
-        await query.edit_message_text("❌ Clear operation cancelled.")
-
 async def handle_password_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle password change request."""
     user_id = update.effective_user.id
@@ -751,7 +769,6 @@ def main():
 
     # Setup bot
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
-    # FIXED: Use asyncio.get_event_loop() instead of bot_app.loop
     bot_loop = asyncio.get_event_loop()
 
     # Add handlers
@@ -762,16 +779,11 @@ def main():
     bot_app.add_handler(CommandHandler("clear", clear_logs))
     bot_app.add_handler(CommandHandler("cancel", cancel))
     
-    # Password input handler
+    # Password input handler (handles both authentication and password changes)
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password_input))
-    
-    # Password change handler
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password_change))
     
     # Callback handlers
     bot_app.add_handler(CallbackQueryHandler(button_callback))
-    bot_app.add_handler(CallbackQueryHandler(confirm_clear, pattern="^(confirm_clear|cancel_clear)$"))
-    bot_app.add_handler(CallbackQueryHandler(cancel_auth, pattern="^cancel_auth$"))
 
     # Start Flask in a separate thread
     def run_flask():
