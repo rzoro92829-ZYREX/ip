@@ -28,7 +28,7 @@ from telegram.ext import (
 
 # ==================== CONFIGURATION (HARDCODED) ====================
 # Replace these with your actual values
-BOT_TOKEN = "8260905342:AAF6VR62-At2CUb5ZGBuORUG4-r-_DzZYqo"  # Get from @BotFather
+BOT_TOKEN = "8294262789:AAGfKxpssjw2lpTF_a482vi6Ok_cLrgT3HI"  # Get from @BotFather
 OWNER_ID = 8909378644  # Your Telegram User ID (get from @userinfobot)
 PASSWORD = "180310"  # Default password for bot access
 
